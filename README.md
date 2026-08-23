@@ -94,7 +94,7 @@ The delivery contract is at least once. Exactly once is not claimed across Postg
 
 ## Quick start
 
-Prerequisites are Docker with Compose/Buildx, Go 1.25+, Node 22+, kind, kubectl, curl, and jq. Ports and troubleshooting are in [DEVELOPMENT.md](docs/DEVELOPMENT.md).
+Prerequisites are Docker with Compose/Buildx, Go 1.25.13+, Node 22+, kind, kubectl, curl, and jq. Ports and troubleshooting are in [DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 Control plane and dashboard:
 

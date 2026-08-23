@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Docker Desktop or a compatible Docker Engine with Compose and Buildx
-- Go 1.25 or newer for native backend work
+- Go 1.25.13 or newer for native backend work
 - Node.js 22 and npm for native dashboard work
 - `kind`, `kubectl`, `curl`, and `jq` for cluster/E2E work
 - host ports `80`, `3000`, `5001`, `8080`, `9090`, and `55432` available for the full local stack
