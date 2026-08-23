@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify formatting
+        run: test -z "$(gofmt -l $(find apps internal tests examples -path '*/node_modules' -prune -o -name '*.go' -type f -print))"
+      - name: Vet
+        run: go vet ./apps/api ./apps/migrate ./apps/seed ./apps/worker ./internal/...
+      - name: Test with race detector
+        run: go test -race ./apps/api ./apps/migrate ./apps/seed ./apps/worker ./internal/...
+      - name: Scan reachable Go dependencies
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./apps/api ./apps/migrate ./apps/seed ./apps/worker ./internal/...
+      - name: Build
+        run: go build ./apps/api ./apps/migrate ./apps/seed ./apps/worker ./internal/...
+
+  database-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: forge
+          POSTGRES_USER: forge
+          POSTGRES_PASSWORD: forge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U forge -d forge"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test migrations, API persistence, queue concurrency, and webhook deduplication
+        env:
+          FORGE_TEST_DATABASE_URL: postgres://forge:forge@localhost:5432/forge?sslmode=disable
+        run: go test -count=1 -tags=integration -v ./tests/integration/...
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: examples/hello-node/package-lock.json
+      - name: Audit Node example dependencies
+        run: npm --prefix examples/hello-node audit --omit=dev --audit-level=high
+      - name: Build Go example image
+        run: docker build --tag forge-example-go:ci examples/hello-go
+      - name: Build Node example image
+        run: docker build --tag forge-example-node:ci examples/hello-node
+      - name: Verify deterministic build failure fixture
+        run: if docker build --tag forge-expected-failure:ci examples/failures/build-failure; then exit 1; fi
+      - name: Build runtime failure fixtures
+        run: |
+          docker build --tag forge-crash:ci examples/failures/crash
+          docker build --tag forge-unhealthy:ci examples/failures/unhealthy

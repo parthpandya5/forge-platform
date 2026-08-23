@@ -1,0 +1,572 @@
+openapi: 3.1.0
+info:
+  title: Forge Control Plane API
+  version: 0.1.0
+  description: REST API for the single-user local Forge control plane.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: system
+  - name: projects
+  - name: services
+  - name: deployments
+  - name: environment
+  - name: webhooks
+paths:
+  /health:
+    get:
+      tags: [system]
+      summary: Process liveness
+      responses:
+        "200":
+          description: API process is alive.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Health"}
+  /ready:
+    get:
+      tags: [system]
+      summary: PostgreSQL readiness
+      responses:
+        "200":
+          description: Required dependencies are ready.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Health"}
+        "503": {$ref: "#/components/responses/Error"}
+  /metrics:
+    get:
+      tags: [system]
+      summary: Prometheus metrics
+      responses:
+        "200":
+          description: Prometheus text exposition.
+          content:
+            text/plain:
+              schema: {type: string}
+  /api/projects:
+    post:
+      tags: [projects]
+      summary: Create a project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CreateProject"}
+      responses:
+        "201":
+          description: Project created.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProjectEnvelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+    get:
+      tags: [projects]
+      summary: List projects
+      parameters:
+        - {$ref: "#/components/parameters/Limit"}
+        - {$ref: "#/components/parameters/Offset"}
+      responses:
+        "200":
+          description: Owner-scoped projects ordered newest first.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: "#/components/schemas/PaginationEnvelope"}
+                  - type: object
+                    properties:
+                      data: {type: array, items: {$ref: "#/components/schemas/Project"}}
+  /api/projects/{projectID}:
+    parameters:
+      - {$ref: "#/components/parameters/ProjectID"}
+    get:
+      tags: [projects]
+      summary: Get a project
+      responses:
+        "200":
+          description: Project found.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProjectEnvelope"}
+        "404": {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [projects]
+      summary: Delete a project and its database history
+      responses:
+        "204": {description: Project deleted; the worker garbage collector removes its workload resources.}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/projects/{projectID}/services:
+    parameters:
+      - {$ref: "#/components/parameters/ProjectID"}
+    post:
+      tags: [services]
+      summary: Create a web service
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ServiceInput"}
+      responses:
+        "201":
+          description: Service created.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ServiceEnvelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+    get:
+      tags: [services]
+      summary: List project services
+      responses:
+        "200":
+          description: Services ordered by creation time.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {type: array, items: {$ref: "#/components/schemas/Service"}}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/services/{serviceID}:
+    parameters:
+      - {$ref: "#/components/parameters/ServiceID"}
+    get:
+      tags: [services]
+      summary: Get a service
+      responses:
+        "200":
+          description: Service found.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ServiceEnvelope"}
+        "404": {$ref: "#/components/responses/Error"}
+    put:
+      tags: [services]
+      summary: Replace mutable service configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ServiceInput"}
+      responses:
+        "200":
+          description: Service updated; changes apply during the next deployment.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ServiceEnvelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [services]
+      summary: Delete a service and its database history
+      responses:
+        "204": {description: Service deleted; workload cleanup is asynchronous.}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/services/{serviceID}/deployments:
+    parameters:
+      - {$ref: "#/components/parameters/ServiceID"}
+    post:
+      tags: [deployments]
+      summary: Queue an asynchronous deployment
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                ref: {type: string, description: Branch, tag, or 40-character commit; defaults to the configured branch.}
+      responses:
+        "202":
+          description: Deployment, initial event, and leased job were committed atomically.
+          headers:
+            Location: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DeploymentEnvelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    get:
+      tags: [deployments]
+      summary: List immutable deployment history
+      parameters:
+        - {$ref: "#/components/parameters/Limit"}
+        - {$ref: "#/components/parameters/Offset"}
+      responses:
+        "200":
+          description: Deployments ordered newest first.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: "#/components/schemas/PaginationEnvelope"}
+                  - type: object
+                    properties:
+                      data: {type: array, items: {$ref: "#/components/schemas/Deployment"}}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/deployments/{deploymentID}:
+    parameters:
+      - {$ref: "#/components/parameters/DeploymentID"}
+    get:
+      tags: [deployments]
+      summary: Get deployment state
+      responses:
+        "200":
+          description: Deployment found.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DeploymentEnvelope"}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/deployments/{deploymentID}/events:
+    parameters:
+      - {$ref: "#/components/parameters/DeploymentID"}
+      - {$ref: "#/components/parameters/AfterID"}
+      - {$ref: "#/components/parameters/EventLimit"}
+    get:
+      tags: [deployments]
+      summary: Read ordered deployment events
+      responses:
+        "200":
+          description: Events with IDs greater than after_id.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: array, items: {$ref: "#/components/schemas/DeploymentEvent"}}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/deployments/{deploymentID}/logs:
+    parameters:
+      - {$ref: "#/components/parameters/DeploymentID"}
+      - {$ref: "#/components/parameters/AfterID"}
+      - {$ref: "#/components/parameters/EventLimit"}
+    get:
+      tags: [deployments]
+      summary: Read persisted source, build, and runtime log records
+      responses:
+        "200":
+          description: Logs with IDs greater than after_id.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: array, items: {$ref: "#/components/schemas/DeploymentLog"}}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/deployments/{deploymentID}/stream:
+    parameters:
+      - {$ref: "#/components/parameters/DeploymentID"}
+      - name: after_event_id
+        in: query
+        schema: {type: integer, format: int64, minimum: 0, default: 0}
+      - name: after_log_id
+        in: query
+        schema: {type: integer, format: int64, minimum: 0, default: 0}
+    get:
+      tags: [deployments]
+      summary: Stream events and logs for up to 25 seconds
+      responses:
+        "200":
+          description: SSE events named deployment.event and deployment.log; clients reconnect with the last IDs.
+          content:
+            text/event-stream:
+              schema: {type: string}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/deployments/{deploymentID}/rollback:
+    parameters:
+      - {$ref: "#/components/parameters/DeploymentID"}
+    post:
+      tags: [deployments]
+      summary: Queue a new deployment from a successful immutable artifact
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false}
+      responses:
+        "202":
+          description: Rollback deployment queued.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DeploymentEnvelope"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /api/services/{serviceID}/environment:
+    parameters:
+      - {$ref: "#/components/parameters/ServiceID"}
+    get:
+      tags: [environment]
+      summary: List environment variable metadata
+      responses:
+        "200":
+          description: Values are never returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {type: array, items: {$ref: "#/components/schemas/EnvironmentVariable"}}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/services/{serviceID}/environment/{environmentKeyOrID}:
+    parameters:
+      - {$ref: "#/components/parameters/ServiceID"}
+      - name: environmentKeyOrID
+        in: path
+        required: true
+        description: A variable key for PUT or the metadata UUID for DELETE.
+        schema:
+          oneOf:
+            - {type: string, pattern: "^[A-Za-z_][A-Za-z0-9_]{0,127}$"}
+            - {type: string, format: uuid}
+    put:
+      tags: [environment]
+      summary: Create or replace a write-only environment value
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              additionalProperties: false
+              properties:
+                value: {type: string, minLength: 1, maxLength: 65536, writeOnly: true}
+      responses:
+        "200":
+          description: Public metadata for the encrypted value.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/EnvironmentVariable"}
+        "400": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [environment]
+      summary: Delete an environment variable by metadata ID
+      responses:
+        "204": {description: Variable deleted.}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/webhooks/github:
+    post:
+      tags: [webhooks]
+      summary: Accept a signed GitHub push or ping delivery when configured
+      parameters:
+        - name: X-Hub-Signature-256
+          in: header
+          required: true
+          schema: {type: string, pattern: "^sha256=[0-9a-f]{64}$"}
+        - name: X-GitHub-Delivery
+          in: header
+          required: true
+          schema: {type: string, maxLength: 200}
+        - name: X-GitHub-Event
+          in: header
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, description: GitHub webhook payload, maxProperties: 1000}
+      responses:
+        "202": {description: Delivery accepted, ignored, or deduplicated.}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+components:
+  parameters:
+    ProjectID:
+      name: projectID
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    ServiceID:
+      name: serviceID
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    DeploymentID:
+      name: deploymentID
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+    Offset:
+      name: offset
+      in: query
+      schema: {type: integer, minimum: 0, maximum: 1000000, default: 0}
+    AfterID:
+      name: after_id
+      in: query
+      schema: {type: integer, format: int64, minimum: 0, default: 0}
+    EventLimit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 1000, default: 250}
+  responses:
+    Error:
+      description: Stable error envelope. The X-Request-ID response header identifies the request.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string, enum: [ok, ready]}
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string}
+            message: {type: string}
+    PaginationEnvelope:
+      type: object
+      required: [data, pagination]
+      properties:
+        pagination:
+          type: object
+          required: [limit, offset, count]
+          properties:
+            limit: {type: integer}
+            offset: {type: integer}
+            count: {type: integer}
+    CreateProject:
+      type: object
+      additionalProperties: false
+      required: [name, slug, repository_url, repository_branch]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100}
+        slug: {type: string, pattern: "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"}
+        repository_url: {type: string, format: uri, description: Public HTTPS github.com owner/repository URL.}
+        repository_branch: {type: string, minLength: 1, maxLength: 255}
+        auto_deploy: {type: boolean, default: false}
+    Project:
+      type: object
+      required: [id, user_id, name, slug, repository_url, repository_branch, auto_deploy, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        user_id: {type: string, format: uuid}
+        name: {type: string}
+        slug: {type: string}
+        repository_url: {type: string, format: uri}
+        repository_branch: {type: string}
+        auto_deploy: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        current_deployment: {$ref: "#/components/schemas/DeploymentSummary"}
+    ProjectEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/Project"}
+    DeploymentSummary:
+      type: object
+      required: [id, status, commit_sha, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        status: {$ref: "#/components/schemas/DeploymentStatus"}
+        commit_sha: {type: [string, "null"], pattern: "^[0-9a-f]{40}$"}
+        created_at: {type: string, format: date-time}
+    ServiceInput:
+      type: object
+      additionalProperties: false
+      required: [name, internal_port]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100}
+        internal_port: {type: integer, minimum: 1, maximum: 65535}
+        desired_replicas: {type: integer, minimum: 1, maximum: 20, default: 1}
+        health_check_path: {type: string, maxLength: 512, default: /health}
+        cpu_request: {type: string, default: 100m}
+        cpu_limit: {type: string, default: 500m, description: Maximum 8 CPU.}
+        memory_request: {type: string, default: 128Mi}
+        memory_limit: {type: string, default: 512Mi, description: Maximum 16Gi.}
+    Service:
+      allOf:
+        - {$ref: "#/components/schemas/ServiceInput"}
+        - type: object
+          required: [id, project_id, service_type, health_status, created_at, updated_at]
+          properties:
+            id: {type: string, format: uuid}
+            project_id: {type: string, format: uuid}
+            service_type: {type: string, enum: [web]}
+            health_status: {type: string, enum: [UNKNOWN, RUNNING, DEGRADED, UNHEALTHY]}
+            health_message: {type: [string, "null"]}
+            health_checked_at: {type: [string, "null"], format: date-time}
+            created_at: {type: string, format: date-time}
+            updated_at: {type: string, format: date-time}
+    ServiceEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/Service"}
+    DeploymentStatus:
+      type: string
+      enum: [QUEUED, CLONING, BUILDING, PUSHING, DEPLOYING, VERIFYING, LIVE, FAILED, CANCELLED]
+    Deployment:
+      type: object
+      required: [id, service_id, status, request_id, created_at, updated_at, version]
+      properties:
+        id: {type: string, format: uuid}
+        service_id: {type: string, format: uuid}
+        commit_sha: {type: [string, "null"], pattern: "^[0-9a-f]{40}$"}
+        requested_ref: {type: [string, "null"]}
+        status: {$ref: "#/components/schemas/DeploymentStatus"}
+        image_tag: {type: [string, "null"]}
+        route_url: {type: [string, "null"], format: uri}
+        rollback_of: {type: [string, "null"], format: uuid}
+        request_id: {type: string}
+        error_message: {type: [string, "null"]}
+        created_at: {type: string, format: date-time}
+        started_at: {type: [string, "null"], format: date-time}
+        finished_at: {type: [string, "null"], format: date-time}
+        updated_at: {type: string, format: date-time}
+        version: {type: integer, format: int64}
+    DeploymentEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/Deployment"}
+    DeploymentEvent:
+      type: object
+      required: [id, deployment_id, event_type, message, metadata, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        deployment_id: {type: string, format: uuid}
+        event_type: {type: string}
+        message: {type: string}
+        metadata: {type: object, additionalProperties: true}
+        created_at: {type: string, format: date-time}
+    DeploymentLog:
+      type: object
+      required: [id, deployment_id, stream, message, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        deployment_id: {type: string, format: uuid}
+        stream: {type: string, enum: [system, build, runtime]}
+        message: {type: string}
+        created_at: {type: string, format: date-time}
+    EnvironmentVariable:
+      type: object
+      required: [id, service_id, key, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        service_id: {type: string, format: uuid}
+        key: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}

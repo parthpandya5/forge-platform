@@ -1,0 +1,111 @@
+name: forge
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: forge
+      POSTGRES_USER: forge
+      POSTGRES_PASSWORD: forge
+    ports:
+      - "${FORGE_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - forge-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forge -d forge"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/docker/api.Dockerfile
+    environment:
+      FORGE_ENV: ${FORGE_ENV:-development}
+      FORGE_LOG_LEVEL: ${FORGE_LOG_LEVEL:-info}
+      FORGE_DATABASE_URL: postgres://forge:forge@postgres:5432/forge?sslmode=disable
+      FORGE_API_ADDR: :8080
+      FORGE_CORS_ORIGIN: ${FORGE_CORS_ORIGIN:-http://localhost:3000}
+      FORGE_MIGRATIONS_PATH: /migrations
+      FORGE_LOCAL_USER_EMAIL: ${FORGE_LOCAL_USER_EMAIL:-developer@forge.local}
+      FORGE_LOCAL_USER_NAME: ${FORGE_LOCAL_USER_NAME:-Local Developer}
+      FORGE_JOB_MAX_ATTEMPTS: ${FORGE_JOB_MAX_ATTEMPTS:-3}
+      FORGE_ENCRYPTION_KEY: ${FORGE_ENCRYPTION_KEY:-}
+      FORGE_GITHUB_WEBHOOK_SECRET: ${FORGE_GITHUB_WEBHOOK_SECRET:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  migrate:
+    build:
+      context: .
+      dockerfile: deploy/docker/api.Dockerfile
+    entrypoint: ["/forge-migrate"]
+    environment:
+      FORGE_DATABASE_URL: postgres://forge:forge@postgres:5432/forge?sslmode=disable
+      FORGE_MIGRATIONS_PATH: /migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/docker/web.Dockerfile
+      args:
+        NEXT_PUBLIC_FORGE_API_URL: ${NEXT_PUBLIC_FORGE_API_URL:-http://localhost:8080}
+    environment:
+      NEXT_PUBLIC_FORGE_API_URL: ${NEXT_PUBLIC_FORGE_API_URL:-http://localhost:8080}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+  worker:
+    profiles: ["runtime"]
+    build:
+      context: .
+      dockerfile: deploy/docker/worker.Dockerfile
+    environment:
+      FORGE_ENV: ${FORGE_ENV:-development}
+      FORGE_LOG_LEVEL: ${FORGE_LOG_LEVEL:-info}
+      FORGE_DATABASE_URL: postgres://forge:forge@postgres:5432/forge?sslmode=disable
+      FORGE_WORKER_ID: ${FORGE_WORKER_ID:-}
+      FORGE_WORKER_CONCURRENCY: ${FORGE_WORKER_CONCURRENCY:-2}
+      FORGE_JOB_LEASE: ${FORGE_JOB_LEASE:-30s}
+      FORGE_JOB_HEARTBEAT: ${FORGE_JOB_HEARTBEAT:-10s}
+      FORGE_JOB_MAX_ATTEMPTS: ${FORGE_JOB_MAX_ATTEMPTS:-3}
+      FORGE_CLONE_TIMEOUT: ${FORGE_CLONE_TIMEOUT:-2m}
+      FORGE_BUILD_TIMEOUT: ${FORGE_BUILD_TIMEOUT:-15m}
+      FORGE_ROLLOUT_TIMEOUT: ${FORGE_ROLLOUT_TIMEOUT:-5m}
+      FORGE_HEALTH_INTERVAL: ${FORGE_HEALTH_INTERVAL:-30s}
+      FORGE_KUBECONFIG: /etc/forge/kubeconfig
+      FORGE_KUBE_NAMESPACE: ${FORGE_KUBE_NAMESPACE:-forge-apps}
+      FORGE_INGRESS_CLASS: ${FORGE_INGRESS_CLASS:-nginx}
+      FORGE_BASE_DOMAIN: ${FORGE_BASE_DOMAIN:-localhost}
+      FORGE_DOCKER_HOST: unix:///var/run/docker.sock
+      FORGE_WORKER_METRICS_ADDR: :9090
+      FORGE_ENCRYPTION_KEY: ${FORGE_ENCRYPTION_KEY:-}
+      FORGE_IMAGE_REPOSITORY: ${FORGE_IMAGE_REPOSITORY:-forge}
+      FORGE_REGISTRY: ${FORGE_REGISTRY:-localhost:5001}
+      FORGE_PUSH_IMAGES: ${FORGE_PUSH_IMAGES:-true}
+      FORGE_PULL_POLICY: ${FORGE_PULL_POLICY:-Always}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${FORGE_CONTAINER_KUBECONFIG:-./deploy/kubernetes/generated/worker-kubeconfig}:/etc/forge/kubeconfig:ro
+    group_add:
+      - "0"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "9090:9090"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  forge-postgres:

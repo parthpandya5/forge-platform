@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS webhook_deliveries;
+DROP TABLE IF EXISTS jobs;
+DROP TABLE IF EXISTS environment_variables;
+DROP TABLE IF EXISTS deployment_logs;
+DROP TABLE IF EXISTS deployment_events;
+DROP TABLE IF EXISTS deployments;
+DROP TABLE IF EXISTS services;
+DROP TABLE IF EXISTS projects;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS schema_migrations;
